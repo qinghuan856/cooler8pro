@@ -7,7 +7,8 @@ on:
       - main
 
 jobs:
-  build:
+  build-magisk-module:
+    name: Build Magisk Module
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -22,16 +23,18 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Gradle cache
+      - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
       - name: Accept Android SDK licenses
         shell: bash
-        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
 
       - name: Install Android SDK packages
         shell: bash
-        run: "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-35" "build-tools;35.0.0"
+        run: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-35" "build-tools;35.0.0"
 
       - name: Make scripts executable
         shell: bash
@@ -40,10 +43,14 @@ jobs:
           chmod +x ./scripts/package-magisk-module.sh
 
       - name: Build BLE service APK
-        run: ./gradlew --no-daemon :magisk-ble-service:assembleRelease
+        shell: bash
+        run: |
+          ./gradlew --no-daemon :magisk-ble-service:assembleRelease
 
       - name: Package Magisk module
-        run: ./scripts/package-magisk-module.sh
+        shell: bash
+        run: |
+          ./scripts/package-magisk-module.sh
 
       - name: Upload BLE service APK
         uses: actions/upload-artifact@v4
