@@ -6,6 +6,7 @@ import java.util.UUID
 object BleProtocol {
     val powerModeUuid: UUID = uuid16("1011")
     val fanModeUuid: UUID = uuid16("1012")
+    val tempUuid: UUID = uuid16("1014")
     val statusUuid: UUID = uuid16("1015")
     val boostUuid: UUID = uuid16("1017")
     val smartUuid: UUID = uuid16("1018")

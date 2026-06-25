@@ -25,13 +25,8 @@ class MagcoolerBleService : Service() {
     override fun onCreate() {
         super.onCreate()
         logger = ModuleLogger(config)
-        bleClient = BleCoolerClient(
-            context = this,
-            handler = handler,
-            config = config,
-            logger = logger,
-            onStatus = { updateStatus(it) }
-        )
+        bleClient = BleClientHolder.get(this)
+        CoolerStateStore.addListener { state -> updateStatus(state.status) }
         createChannel()
         startForegroundCompat()
         logger.info("service created")
@@ -59,6 +54,11 @@ class MagcoolerBleService : Service() {
         evaluating = true
         handler.postDelayed({
             evaluating = false
+            if (reason == ACTION_UI_OPEN) {
+                updateStatus("控制面板已打开")
+                bleClient.connectIfNeeded()
+                return@postDelayed
+            }
             if (!config.enabled) {
                 updateStatus("模块已禁用")
                 logger.info("skip because module disabled")
@@ -155,6 +155,7 @@ class MagcoolerBleService : Service() {
 
     companion object {
         const val ACTION_EVALUATE = "com.magcooler.magiskble.action.EVALUATE"
+        const val ACTION_UI_OPEN = "com.magcooler.magiskble.action.UI_OPEN"
         private const val CHANNEL_ID = "magcooler_charge_cooler"
         private const val NOTIFICATION_ID = 4608
         private const val PREFS = "magcooler_magisk_ble"

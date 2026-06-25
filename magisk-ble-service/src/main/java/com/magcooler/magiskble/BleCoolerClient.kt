@@ -6,6 +6,7 @@ import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCallback
 import android.bluetooth.BluetoothGattCharacteristic
+import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
 import android.bluetooth.le.ScanCallback
@@ -18,6 +19,7 @@ import android.os.Handler
 import android.os.Looper
 import java.util.ArrayDeque
 import java.util.Locale
+import java.util.UUID
 
 class BleCoolerClient(
     private val context: Context,
@@ -45,11 +47,14 @@ class BleCoolerClient(
 
     private var charPowerMode: BluetoothGattCharacteristic? = null
     private var charFanMode: BluetoothGattCharacteristic? = null
+    private var charTemp: BluetoothGattCharacteristic? = null
     private var charStatus: BluetoothGattCharacteristic? = null
     private var charBoost: BluetoothGattCharacteristic? = null
     private var charSmart: BluetoothGattCharacteristic? = null
     private var charFanSpeed: BluetoothGattCharacteristic? = null
     private var charPower: BluetoothGattCharacteristic? = null
+    private var currentWrite: WriteJob? = null
+    private var onReadyOnce: (() -> Unit)? = null
 
     fun updateConfig(newConfig: ModuleConfig) {
         config = newConfig
@@ -71,25 +76,25 @@ class BleCoolerClient(
         bluetoothGatt = null
         clearCharacteristics()
         state = State.IDLE
-        onStatus("已断开")
+        updateState { it.copy(connected = false, status = "已断开") }
     }
 
     fun setManualLevel(level: Int, done: (Boolean) -> Unit) {
         ensureReady("切档") {
             val fan = charFanMode
             if (fan == null) {
-                logger.warn("fan characteristic 1012 is missing")
-                done(false)
+                finishWrite(false, "缺少档位特征 1012", done)
                 return@ensureReady
             }
-            val smart = charSmart
-            val boost = charBoost
-            val power = charPowerMode
-            if (smart != null) enqueueWrite(smart, byteArrayOf(0x00), "关闭智能温控")
-            if (boost != null) enqueueWrite(boost, byteArrayOf(0x00), "关闭 Boost")
-            if (power != null) enqueueWrite(power, byteArrayOf(0x02), "开启散热")
+            charSmart?.let { enqueueWrite(it, byteArrayOf(0x00), "关闭智能温控") }
+            charBoost?.let { enqueueWrite(it, byteArrayOf(0x00), "关闭破坏神") }
+            charPowerMode?.let { enqueueWrite(it, byteArrayOf(0x02), "开启散热") }
             enqueueWrite(fan, byteArrayOf(BleProtocol.fanValueForLevel(level)), "切到 ${level} 档")
-            waitForWrites(done)
+            waitForWrites { ok ->
+                if (ok) updateState { it.copy(level = level, mode = "手动 ${level} 档", smartOn = false, boostOn = false, coolingOn = true) }
+                finishWrite(ok, if (ok) "已切到 ${level} 档" else "切档失败", done)
+                refreshTelemetry()
+            }
         }
     }
 
@@ -97,12 +102,84 @@ class BleCoolerClient(
         ensureReady("关闭散热") {
             val power = charPowerMode
             if (power == null) {
-                logger.warn("power characteristic 1011 is missing")
-                done(false)
+                finishWrite(false, "缺少开关特征 1011", done)
                 return@ensureReady
             }
             enqueueWrite(power, byteArrayOf(0x03), "关闭散热")
-            waitForWrites(done)
+            waitForWrites { ok ->
+                if (ok) updateState { it.copy(coolingOn = false, mode = "已关闭") }
+                finishWrite(ok, if (ok) "散热已关闭" else "关闭失败", done)
+                refreshTelemetry()
+            }
+        }
+    }
+
+    fun turnOn(done: (Boolean) -> Unit) {
+        ensureReady("开启散热") {
+            val power = charPowerMode
+            if (power == null) {
+                finishWrite(false, "缺少开关特征 1011", done)
+                return@ensureReady
+            }
+            enqueueWrite(power, byteArrayOf(0x02), "开启散热")
+            waitForWrites { ok ->
+                if (ok) updateState { it.copy(coolingOn = true, mode = "散热开启") }
+                finishWrite(ok, if (ok) "散热已开启" else "开启失败", done)
+                refreshTelemetry()
+            }
+        }
+    }
+
+    fun setBoost(on: Boolean, done: (Boolean) -> Unit) {
+        ensureReady(if (on) "开启破坏神" else "关闭破坏神") {
+            val boost = charBoost
+            if (boost == null) {
+                finishWrite(false, "缺少破坏神特征 1017", done)
+                return@ensureReady
+            }
+            if (on) {
+                charSmart?.let { enqueueWrite(it, byteArrayOf(0x00), "关闭智能温控") }
+                charPowerMode?.let { enqueueWrite(it, byteArrayOf(0x02), "开启散热") }
+            }
+            enqueueWrite(boost, byteArrayOf((if (on) 0x01 else 0x00).toByte()), if (on) "开启破坏神" else "关闭破坏神")
+            waitForWrites { ok ->
+                if (ok) updateState { it.copy(boostOn = on, smartOn = if (on) false else it.smartOn, coolingOn = if (on) true else it.coolingOn, mode = if (on) "破坏神" else "破坏神已关闭") }
+                finishWrite(ok, if (ok && on) "破坏神已开启" else if (ok) "破坏神已关闭" else "破坏神切换失败", done)
+                refreshTelemetry()
+            }
+        }
+    }
+
+    fun setSmart(on: Boolean, done: (Boolean) -> Unit) {
+        ensureReady(if (on) "开启智能温控" else "关闭智能温控") {
+            val smart = charSmart
+            if (smart == null) {
+                finishWrite(false, "缺少智能温控特征 1018", done)
+                return@ensureReady
+            }
+            if (on) {
+                charBoost?.let { enqueueWrite(it, byteArrayOf(0x00), "关闭破坏神") }
+                charPowerMode?.let { enqueueWrite(it, byteArrayOf(0x02), "开启散热") }
+            }
+            enqueueWrite(smart, byteArrayOf((if (on) 0x01 else 0x00).toByte()), if (on) "开启智能温控" else "关闭智能温控")
+            waitForWrites { ok ->
+                if (ok) updateState { it.copy(smartOn = on, boostOn = if (on) false else it.boostOn, coolingOn = if (on) true else it.coolingOn, mode = if (on) "智能温控" else "智能温控已关闭") }
+                finishWrite(ok, if (ok && on) "智能温控已开启" else if (ok) "智能温控已关闭" else "智能温控切换失败", done)
+                refreshTelemetry()
+            }
+        }
+    }
+
+    fun refreshTelemetry() {
+        ensureReady("刷新状态") {
+            val gatt = bluetoothGatt ?: return@ensureReady
+            listOfNotNull(charStatus, charTemp, charFanSpeed, charPower, charPowerMode, charBoost, charSmart)
+                .distinctBy { it.uuid }
+                .forEachIndexed { index, characteristic ->
+                    handler.postDelayed({
+                        if (hasBlePermission()) runCatching { gatt.readCharacteristic(characteristic) }
+                    }, index * 260L)
+                }
         }
     }
 
@@ -116,25 +193,23 @@ class BleCoolerClient(
         connectIfNeeded()
     }
 
-    private var onReadyOnce: (() -> Unit)? = null
-
     @SuppressLint("MissingPermission")
     private fun startScan() {
         if (!hasBlePermission()) {
-            onStatus("缺少蓝牙权限")
+            updateState { it.copy(status = "缺少蓝牙权限") }
             logger.warn("missing bluetooth permission")
             return
         }
         val adapter = (context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
         if (adapter == null || !adapter.isEnabled) {
-            onStatus("蓝牙未开启")
+            updateState { it.copy(status = "蓝牙未开启") }
             logger.warn("bluetooth adapter is unavailable or disabled")
             return
         }
         state = State.SCANNING
         scanning = true
         val seq = ++scanSeq
-        onStatus("扫描散热器中")
+        updateState { it.copy(status = "扫描散热器中") }
         val settings = ScanSettings.Builder()
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
             .setReportDelay(0L)
@@ -143,14 +218,14 @@ class BleCoolerClient(
             .onFailure {
                 scanning = false
                 state = State.IDLE
-                onStatus("扫描启动失败")
+                updateState { old -> old.copy(status = "扫描启动失败") }
                 logger.error("failed to start BLE scan", it)
             }
         handler.postDelayed({
             if (seq == scanSeq && scanning) {
                 stopScan()
                 state = State.IDLE
-                onStatus("未找到散热器")
+                updateState { it.copy(status = "未找到散热器") }
                 logger.warn("scan timeout")
             }
         }, config.scanTimeoutMs)
@@ -174,7 +249,7 @@ class BleCoolerClient(
             state = State.CONNECTING
             val seq = ++connectSeq
             val name = result.device?.name ?: result.scanRecord?.deviceName ?: "Magcooler"
-            onStatus("发现散热器：$name")
+            updateState { it.copy(status = "发现散热器：$name") }
             logger.info("found cooler $name ${device.address}")
             runCatching {
                 bluetoothGatt?.close()
@@ -187,7 +262,7 @@ class BleCoolerClient(
                 }, config.connectTimeoutMs)
             }.onFailure {
                 state = State.IDLE
-                onStatus("连接失败")
+                updateState { old -> old.copy(status = "连接失败") }
                 logger.error("failed to connect GATT", it)
             }
         }
@@ -207,7 +282,7 @@ class BleCoolerClient(
             }
             if (newState == BluetoothProfile.STATE_CONNECTED) {
                 state = State.DISCOVERING
-                onStatus("发现服务中")
+                updateState { it.copy(status = "发现服务中") }
                 runCatching { gatt.discoverServices() }
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 releaseGatt("散热器已断开")
@@ -228,8 +303,10 @@ class BleCoolerClient(
                 return
             }
             state = State.READY
-            onStatus("散热器已连接")
+            updateState { it.copy(connected = true, status = "散热器已连接") }
             logger.info("cooler GATT ready")
+            enableNotifications(gatt)
+            refreshTelemetry()
             onReadyOnce?.let {
                 onReadyOnce = null
                 handler.post(it)
@@ -245,28 +322,113 @@ class BleCoolerClient(
                     logger.warn("write ${current.label} failed status=$status, retrying")
                     writeQueue.addFirst(current.copy(attemptsLeft = current.attemptsLeft - 1))
                 } else if (status != BluetoothGatt.GATT_SUCCESS) {
+                    updateState { it.copy(lastWriteResult = "写入失败：$status") }
                     logger.warn("write failed status=$status")
                 } else if (current != null) {
+                    updateState { it.copy(lastWriteResult = current.label) }
                     logger.info("write ok: ${current.label}")
-                    onStatus(current.label)
                 }
                 scheduleNextWrite()
             }
         }
-    }
 
-    private var currentWrite: WriteJob? = null
+        @Deprecated("Deprecated in Android 13")
+        override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
+            if (gatt !== bluetoothGatt) return
+            handleCharacteristic(characteristic.uuid, characteristic.value ?: ByteArray(0))
+        }
+
+        override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, value: ByteArray) {
+            if (gatt !== bluetoothGatt) return
+            handleCharacteristic(characteristic.uuid, value)
+        }
+
+        @Deprecated("Deprecated in Android 13")
+        override fun onCharacteristicRead(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
+            if (gatt !== bluetoothGatt) return
+            if (status == BluetoothGatt.GATT_SUCCESS) handleCharacteristic(characteristic.uuid, characteristic.value ?: ByteArray(0))
+        }
+
+        override fun onCharacteristicRead(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, value: ByteArray, status: Int) {
+            if (gatt !== bluetoothGatt) return
+            if (status == BluetoothGatt.GATT_SUCCESS) handleCharacteristic(characteristic.uuid, value)
+        }
+    }
 
     private fun findCharacteristics(gatt: BluetoothGatt) {
         val chars = gatt.services.flatMap { it.characteristics }
-        fun find(uuid: java.util.UUID): BluetoothGattCharacteristic? = chars.firstOrNull { it.uuid == uuid }
+        fun find(uuid: UUID): BluetoothGattCharacteristic? = chars.firstOrNull { it.uuid == uuid }
         charPowerMode = find(BleProtocol.powerModeUuid)
         charFanMode = find(BleProtocol.fanModeUuid)
+        charTemp = find(BleProtocol.tempUuid)
         charStatus = find(BleProtocol.statusUuid)
         charBoost = find(BleProtocol.boostUuid)
         charSmart = find(BleProtocol.smartUuid)
         charFanSpeed = find(BleProtocol.fanSpeedUuid)
         charPower = find(BleProtocol.powerUuid)
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun enableNotifications(gatt: BluetoothGatt) {
+        if (!hasBlePermission()) return
+        val notifyList = listOfNotNull(charStatus, charTemp, charFanSpeed, charPower, charPowerMode, charBoost, charSmart)
+            .distinctBy { it.uuid }
+            .filter { characteristic ->
+                characteristic.properties and BluetoothGattCharacteristic.PROPERTY_NOTIFY != 0 ||
+                    characteristic.properties and BluetoothGattCharacteristic.PROPERTY_INDICATE != 0
+            }
+        notifyList.forEachIndexed { index, characteristic ->
+            handler.postDelayed({
+                runCatching {
+                    gatt.setCharacteristicNotification(characteristic, true)
+                    val cccd = characteristic.getDescriptor(UUID.fromString("00002902-0000-1000-8000-00805f9b34fb"))
+                    if (cccd != null) {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                            gatt.writeDescriptor(cccd, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
+                        } else {
+                            @Suppress("DEPRECATION")
+                            cccd.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+                            @Suppress("DEPRECATION")
+                            gatt.writeDescriptor(cccd)
+                        }
+                    }
+                }.onFailure { logger.warn("enable notify failed ${characteristic.uuid}", it) }
+            }, index * 220L)
+        }
+    }
+
+    private fun handleCharacteristic(uuid: UUID, value: ByteArray) {
+        when (uuid) {
+            BleProtocol.powerModeUuid -> {
+                val raw = value.firstOrNull()?.toInt()?.and(0xFF)
+                if (raw == 0x02 || raw == 0x03) updateState { it.copy(coolingOn = raw == 0x02, status = if (raw == 0x02) "散热已开启" else "散热已关闭") }
+            }
+            BleProtocol.boostUuid -> {
+                val on = value.firstOrNull()?.toInt()?.and(0xFF) == 0x01
+                updateState { it.copy(boostOn = on, mode = if (on) "破坏神" else if (it.mode == "破坏神") "待机" else it.mode) }
+            }
+            BleProtocol.smartUuid -> {
+                val on = value.firstOrNull()?.toInt()?.and(0xFF) == 0x01
+                updateState { it.copy(smartOn = on, mode = if (on) "智能温控" else if (it.mode == "智能温控") "待机" else it.mode) }
+            }
+            BleProtocol.tempUuid -> parseTemp(value)?.let { temp -> updateState { it.copy(coolerTempC = temp) } }
+            BleProtocol.fanSpeedUuid -> parseRpm(value)?.let { rpm -> updateState { it.copy(fanRpm = rpm) } }
+            BleProtocol.powerUuid -> parsePower(value)?.let { power -> updateState { it.copy(powerW = power) } }
+            BleProtocol.statusUuid -> parseStatus1015(value)
+        }
+    }
+
+    private fun parseStatus1015(value: ByteArray) {
+        if (value.size < 2) return
+        when (value[0].toInt() and 0xFF) {
+            0x04 -> parseStatusTemp(value)?.let { temp -> updateState { it.copy(coolerTempC = temp) } }
+            0x08 -> parseRpm(value)?.let { rpm -> updateState { it.copy(fanRpm = rpm) } }
+            0x09 -> parsePower(value)?.let { power -> updateState { it.copy(powerW = power) } }
+            0x05 -> {
+                val raw = value[1].toInt() and 0xFF
+                if (raw == 0x7F) updateState { it.copy(coolingOn = false, mode = "已关闭") }
+            }
+        }
     }
 
     private fun enqueueWrite(characteristic: BluetoothGattCharacteristic, value: ByteArray, label: String) {
@@ -318,6 +480,11 @@ class BleCoolerClient(
         poll()
     }
 
+    private fun finishWrite(ok: Boolean, message: String, done: (Boolean) -> Unit) {
+        updateState { it.copy(lastWriteResult = message, status = message) }
+        done(ok)
+    }
+
     private fun releaseGatt(message: String) {
         stopScan()
         runCatching { bluetoothGatt?.disconnect() }
@@ -327,12 +494,13 @@ class BleCoolerClient(
         writeQueue.clear()
         writeInProgress = false
         state = State.IDLE
-        onStatus(message)
+        updateState { it.copy(connected = false, status = message) }
     }
 
     private fun clearCharacteristics() {
         charPowerMode = null
         charFanMode = null
+        charTemp = null
         charStatus = null
         charBoost = null
         charSmart = null
@@ -374,5 +542,53 @@ class BleCoolerClient(
         val lower = trimmed.lowercase(Locale.US)
         if (config.deviceNameFilters.any { lower.contains(it) }) return true
         return Regex("(^|[^a-z0-9])rm[^a-z0-9]*8[^a-z0-9]*pro([^a-z0-9]|$)").containsMatchIn(lower)
+    }
+
+    private fun parseTemp(value: ByteArray): Float? {
+        if (value.isEmpty()) return null
+        if (value.size == 1) {
+            val temp = value[0].toInt().toFloat()
+            return if (temp in -40f..80f) temp else null
+        }
+        if ((value[0].toInt() and 0xFF) == 0x04) return parseStatusTemp(value)
+        val be = ((value[0].toInt() and 0xFF) shl 8) or (value[1].toInt() and 0xFF)
+        val le = ((value[1].toInt() and 0xFF) shl 8) or (value[0].toInt() and 0xFF)
+        return listOfNotNull(signed16ToC(be), signed16ToC(le), be.toFloat(), be / 10f, le.toFloat(), le / 10f)
+            .firstOrNull { it in -40f..80f }
+    }
+
+    private fun parseStatusTemp(value: ByteArray): Float? {
+        if (value.size < 2) return null
+        val temp = value[1].toInt().toFloat()
+        return if (temp in -40f..80f) temp else null
+    }
+
+    private fun signed16ToC(raw: Int): Float? {
+        val signed = if (raw and 0x8000 != 0) raw - 0x10000 else raw
+        return if (signed in -400..800) signed.toFloat() else null
+    }
+
+    private fun parseRpm(value: ByteArray): Int? {
+        if (value.size >= 3 && (value[0].toInt() and 0xFF) == 0x08) {
+            return ((value[1].toInt() and 0xFF) shl 8) or (value[2].toInt() and 0xFF)
+        }
+        if (value.size < 2) return null
+        val rpm = ((value[0].toInt() and 0xFF) shl 8) or (value[1].toInt() and 0xFF)
+        return if (rpm in 0..12000) rpm else null
+    }
+
+    private fun parsePower(value: ByteArray): Int? {
+        if (value.isEmpty()) return null
+        val power = if (value.size >= 2 && (value[0].toInt() and 0xFF) == 0x09) {
+            value[1].toInt() and 0xFF
+        } else {
+            value[0].toInt() and 0xFF
+        }
+        return if (power in 0..80) power else null
+    }
+
+    private fun updateState(transform: (CoolerTelemetryState) -> CoolerTelemetryState) {
+        CoolerStateStore.update(transform)
+        onStatus(CoolerStateStore.state.status)
     }
 }
