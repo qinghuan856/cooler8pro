@@ -278,7 +278,7 @@ class BleCoolerClient(
     private fun scheduleNextWrite() {
         if (writeInProgress) return
         val gatt = bluetoothGatt ?: return
-        val job = writeQueue.removeFirstOrNull() ?: return
+        val job = if (writeQueue.isEmpty()) return else writeQueue.removeFirst()
         if (!hasBlePermission()) return
         handler.postDelayed({
             currentWrite = job
@@ -287,8 +287,9 @@ class BleCoolerClient(
                 gatt.writeCharacteristic(job.characteristic, job.value, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT) == BluetoothGatt.GATT_SUCCESS
             } else {
                 @Suppress("DEPRECATION")
-                job.characteristic.value = job.value
-                job.characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+                job.characteristic.setValue(job.value)
+                @Suppress("DEPRECATION")
+                job.characteristic.setWriteType(BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
                 @Suppress("DEPRECATION")
                 gatt.writeCharacteristic(job.characteristic)
             }
