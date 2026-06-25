@@ -1,0 +1,6 @@
+id=binghuan_charge_cooler
+name=Binghuan Charge Cooler
+version=1.0.0
+versionCode=1
+author=Claude
+description=Charge-triggered cooler fan controller

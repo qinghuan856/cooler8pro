@@ -1,0 +1,10 @@
+enabled=true
+charge_level=6
+unplug_action=off
+scan_timeout_ms=18000
+connect_timeout_ms=18000
+write_delay_ms=220
+retry_count=2
+reconnect_backoff_ms=5000
+log_enabled=true
+device_name_filters=redmagic,red magic,nubia,magcooler,mag cooler,jacket,srq,8pro
