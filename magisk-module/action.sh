@@ -5,12 +5,12 @@ CFG="/data/adb/modules/binghuan_charge_cooler/config.prop"
 STATE="/data/adb/binghuan_charge_cooler/state.json"
 
 ensure_service() {
-  am start-foreground-service -n "$PKG/.MagcoolerBleService" >/dev/null 2>&1
+  am start-foreground-service --user 0 -n "$PKG/.MagcoolerBleService" >/dev/null 2>&1
 }
 
 send() {
   ensure_service
-  am broadcast -a "$1" ${2:-} >/dev/null 2>&1
+  am broadcast --user 0 -a "$1" ${2:-} >/dev/null 2>&1
 }
 
 save_cfg() {

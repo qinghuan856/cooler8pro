@@ -5,14 +5,14 @@
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>冰环散热控制</title>
 <style>
-:root{color-scheme:dark;font-family:system-ui,sans-serif}body{margin:0;background:#101216;color:#f2f4f8;padding:16px}h1{font-size:22px;margin:0 0 12px}h2{font-size:16px;margin:18px 0 10px}.card{background:#1b1f27;border:1px solid #303746;border-radius:14px;padding:14px;margin:10px 0}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.levels{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}button{border:0;border-radius:10px;padding:12px 8px;background:#2d7dff;color:white;font-weight:700}button.gray{background:#3a4150}button.red{background:#e84d4d}button.orange{background:#ff8a2a}.kv{display:grid;grid-template-columns:1fr 1fr;gap:10px}.label{font-size:12px;color:#9aa4b2}.value{font-size:18px;font-weight:800;margin-top:2px}select,input{width:100%;box-sizing:border-box;background:#111722;color:#fff;border:1px solid #3d4658;border-radius:10px;padding:10px}.ok{color:#7dffa0}.bad{color:#ff8b8b}.hint{font-size:12px;color:#9aa4b2;line-height:1.45}.row{display:flex;gap:8px;align-items:center}.row>*{flex:1}
+:root{color-scheme:dark;font-family:system-ui,sans-serif}body{margin:0;background:#101216;color:#f2f4f8;padding:16px}h1{font-size:22px;margin:0 0 12px}h2{font-size:16px;margin:18px 0 10px}.card{background:#1b1f27;border:1px solid #303746;border-radius:14px;padding:14px;margin:10px 0}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.levels{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}button{border:0;border-radius:10px;padding:12px 8px;background:#2d7dff;color:white;font-weight:700}button.gray{background:#3a4150}button.red{background:#e84d4d}button.orange{background:#ff8a2a}.kv{display:grid;grid-template-columns:1fr 1fr;gap:10px}.label{font-size:12px;color:#9aa4b2}.value{font-size:18px;font-weight:800;margin-top:2px}select,input{width:100%;box-sizing:border-box;background:#111722;color:#fff;border:1px solid #3d4658;border-radius:10px;padding:10px}.ok{color:#7dffa0}.bad{color:#ff8b8b}.hint{font-size:12px;color:#9aa4b2;line-height:1.45}.row{display:flex;gap:8px;align-items:center}.row>*{flex:1}#debug{white-space:pre-wrap;font-size:11px;color:#94a3b8;max-height:120px;overflow:auto}
 </style>
 </head>
 <body>
 <h1>❄️ 冰环散热控制</h1>
 <div class="card">
   <div id="conn" class="value bad">读取状态中...</div>
-  <div class="hint">WebUI 只发命令，BLE 扫描和写入由内置 Android 服务完成。</div>
+  <div class="hint">WebUI 通过 KernelSU 执行 action.sh，BLE 扫描和写入由内置 Android 服务完成。</div>
 </div>
 <div class="card kv">
   <div><div class="label">模式</div><div id="mode" class="value">--</div></div>
@@ -46,21 +46,40 @@
     <button class="gray" onclick="save('enabled','true')">启用自动化</button>
     <button class="gray" onclick="save('enabled','false')">关闭自动化</button>
   </div>
-  <div class="hint" style="margin-top:8px">温度阈值自动化下一版接入；当前先保证手动档位、破坏神和充电档位稳定。</div>
+  <div class="hint" style="margin-top:8px">先保证 WebUI 控制、手动档位、破坏神稳定；温度阈值自动化后续再接。</div>
 </div>
+<h2>调试</h2>
+<div class="card"><div id="debug">等待命令...</div></div>
 <script>
-const action = s => '/action?action=' + encodeURIComponent('/data/adb/modules/binghuan_charge_cooler/action.sh ' + s);
+const ACTION = '/data/adb/modules/binghuan_charge_cooler/action.sh';
 for(let i=1;i<=10;i++){let b=document.createElement('button');b.textContent=i+'档';b.onclick=()=>cmd('set-level '+i);levels.appendChild(b)}
-function cmd(s){fetch(action(s)).then(()=>setTimeout(poll,700)).catch(()=>{})}
-function save(k,v){fetch(action('save '+k+' '+v)).then(()=>alert('已保存 '+k+'='+v)).catch(()=>{})}
-function val(x,fallback='--'){return x===undefined||x===null||x<0?fallback:x}
-function poll(){fetch(action('status')).then(r=>r.json()).then(s=>{
- conn.textContent=(s.connected?'✅ 已连接 ':'⛔ ')+(s.status||'--');conn.className='value '+(s.connected?'ok':'bad');
- mode.textContent=s.mode||'--';level.textContent=s.level>0?s.level+' 档':'--';rpm.textContent=s.fanRpm>=0?s.fanRpm+' RPM':'--';
- power.textContent=s.powerW>=0?s.powerW+' W':'--';temp.textContent=s.coolerTempC>-90?Number(s.coolerTempC).toFixed(1)+' °C':'--';
- write.textContent=s.lastWriteResult||'--';
-}).catch(()=>{})}
-setInterval(poll,2000);poll();
+function log(x){debug.textContent=String(x||'').slice(0,2000)}
+async function shell(command){
+  const full = 'sh ' + ACTION + ' ' + command;
+  try {
+    if (window.ksu && typeof window.ksu.exec === 'function') return await window.ksu.exec(full);
+    if (window.KSU && typeof window.KSU.exec === 'function') return await window.KSU.exec(full);
+    if (window.Android && typeof window.Android.exec === 'function') return window.Android.exec(full);
+    const r = await fetch('/action?action=' + encodeURIComponent(full));
+    return await r.text();
+  } catch(e) {
+    log('执行失败: '+e+'\n命令: '+full);
+    throw e;
+  }
+}
+async function cmd(s){log('执行: '+s); const out=await shell(s); log(out||('已发送: '+s)); setTimeout(poll,1200)}
+async function save(k,v){const out=await shell('save '+k+' '+v); log(out||('已保存 '+k+'='+v)); alert('已保存 '+k+'='+v)}
+async function poll(){
+  try{
+    const out = await shell('status');
+    const s = JSON.parse(String(out).trim() || '{}');
+    conn.textContent=(s.connected?'✅ 已连接 ':'⛔ ')+(s.status||'--');conn.className='value '+(s.connected?'ok':'bad');
+    mode.textContent=s.mode||'--';level.textContent=s.level>0?s.level+' 档':'--';rpm.textContent=s.fanRpm>=0?s.fanRpm+' RPM':'--';
+    power.textContent=s.powerW>=0?s.powerW+' W':'--';temp.textContent=s.coolerTempC>-90?Number(s.coolerTempC).toFixed(1)+' °C':'--';
+    write.textContent=s.lastWriteResult||'--';
+  }catch(e){conn.textContent='⛔ WebUI 命令执行失败';conn.className='value bad'}
+}
+setInterval(poll,2500);poll();
 </script>
 </body>
 </html>
