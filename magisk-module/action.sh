@@ -35,6 +35,20 @@ case "${1:-status}" in
   refresh) send "$PREFIX.REFRESH" ;;
   reconnect) send "$PREFIX.RECONNECT" ;;
   save) save_cfg "${2:-}" "${3:-}" ;;
-  status) cat "$STATE" 2>/dev/null || echo '{"connected":false,"status":"暂无状态"}' ;;
+  status)
+    ensure_service
+    sleep 0.15
+    for f in \
+      /data/user/0/$PKG/files/state.json \
+      /data/data/$PKG/files/state.json \
+      /data/user_de/0/$PKG/files/state.json \
+      "$STATE"; do
+      if [ -s "$f" ]; then
+        cat "$f"
+        exit 0
+      fi
+    done
+    echo '{"connected":false,"status":"暂无状态文件"}'
+    ;;
   *) echo "Usage: $0 {set-level N|boost on/off|smart on/off|turn-on|turn-off|refresh|reconnect|save key value|status}" ;;
 esac

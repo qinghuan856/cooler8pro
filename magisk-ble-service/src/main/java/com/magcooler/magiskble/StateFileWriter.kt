@@ -1,5 +1,6 @@
 package com.magcooler.magiskble
 
+import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import org.json.JSONObject
@@ -8,15 +9,20 @@ import java.io.File
 object StateFileWriter {
     private val handler = Handler(Looper.getMainLooper())
     private var lastWritten = ""
+    private var stateFile: File? = null
     private var seq = 0
 
-    fun start() {
+    fun start(context: Context) {
+        stateFile = File(context.filesDir, "state.json")
         val currentSeq = ++seq
         fun write() {
             if (currentSeq != seq) return
             val text = CoolerStateStore.state.toJson().toString()
             if (text != lastWritten) {
                 lastWritten = text
+                runCatching {
+                    stateFile?.writeText(text)
+                }
                 runCatching {
                     File(STATE_DIR).mkdirs()
                     File(STATE_FILE).writeText(text)
