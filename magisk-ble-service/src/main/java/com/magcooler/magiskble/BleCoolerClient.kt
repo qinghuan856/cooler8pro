@@ -52,12 +52,29 @@ class BleCoolerClient(
     private var charBoost: BluetoothGattCharacteristic? = null
     private var charSmart: BluetoothGattCharacteristic? = null
     private var charFanSpeed: BluetoothGattCharacteristic? = null
+    private var charFanSpeedAlt: BluetoothGattCharacteristic? = null
     private var charPower: BluetoothGattCharacteristic? = null
+    private var charPowerAlt: BluetoothGattCharacteristic? = null
     private var currentWrite: WriteJob? = null
+    private var telemetryPollSeq = 0
     private var onReadyOnce: (() -> Unit)? = null
 
     fun updateConfig(newConfig: ModuleConfig) {
         config = newConfig
+    }
+
+    private fun startTelemetryPolling() {
+        val seq = ++telemetryPollSeq
+        fun poll() {
+            if (seq != telemetryPollSeq || state != State.READY) return
+            refreshTelemetry()
+            handler.postDelayed({ poll() }, 3000L)
+        }
+        handler.postDelayed({ poll() }, 1200L)
+    }
+
+    private fun stopTelemetryPolling() {
+        telemetryPollSeq++
     }
 
     fun connectIfNeeded() {
@@ -68,6 +85,7 @@ class BleCoolerClient(
 
     fun disconnect() {
         handler.removeCallbacksAndMessages(null)
+        stopTelemetryPolling()
         stopScan()
         writeQueue.clear()
         writeInProgress = false
@@ -86,14 +104,28 @@ class BleCoolerClient(
                 finishWrite(false, "缺少档位特征 1012", done)
                 return@ensureReady
             }
+            writeQueue.clear()
+            currentWrite = null
+            writeInProgress = false
             charSmart?.let { enqueueWrite(it, byteArrayOf(0x00), "关闭智能温控") }
             charBoost?.let { enqueueWrite(it, byteArrayOf(0x00), "关闭破坏神") }
             charPowerMode?.let { enqueueWrite(it, byteArrayOf(0x02), "开启散热") }
             enqueueWrite(fan, byteArrayOf(BleProtocol.fanValueForLevel(level)), "切到 ${level} 档")
             waitForWrites { ok ->
-                if (ok) updateState { it.copy(level = level, mode = "手动 ${level} 档", smartOn = false, boostOn = false, coolingOn = true) }
-                finishWrite(ok, if (ok) "已切到 ${level} 档" else "切档失败", done)
+                if (ok) {
+                    updateState { it.copy(level = level, mode = "手动 ${level} 档", smartOn = false, boostOn = false, coolingOn = true, levelConfirmed = false, manualWritePending = true) }
+                    handler.postDelayed({
+                        charFanMode?.let { enqueueWrite(it, byteArrayOf(BleProtocol.fanValueForLevel(level)), "确认 ${level} 档") }
+                        waitForWrites { confirmed ->
+                            updateState { it.copy(levelConfirmed = confirmed, manualWritePending = false, lastWriteResult = if (confirmed) "${level} 档已确认" else "${level} 档确认失败") }
+                            refreshTelemetry()
+                            startTelemetryPolling()
+                        }
+                    }, 700L)
+                }
+                finishWrite(ok, if (ok) "已发 ${level} 档，等待确认" else "切档失败", done)
                 refreshTelemetry()
+                startTelemetryPolling()
             }
         }
     }
@@ -173,7 +205,7 @@ class BleCoolerClient(
     fun refreshTelemetry() {
         ensureReady("刷新状态") {
             val gatt = bluetoothGatt ?: return@ensureReady
-            listOfNotNull(charStatus, charTemp, charFanSpeed, charPower, charPowerMode, charBoost, charSmart)
+            listOfNotNull(charStatus, charTemp, charFanSpeed, charFanSpeedAlt, charPower, charPowerAlt, charPowerMode, charBoost, charSmart)
                 .distinctBy { it.uuid }
                 .forEachIndexed { index, characteristic ->
                     handler.postDelayed({
@@ -307,6 +339,7 @@ class BleCoolerClient(
             logger.info("cooler GATT ready")
             enableNotifications(gatt)
             refreshTelemetry()
+            startTelemetryPolling()
             onReadyOnce?.let {
                 onReadyOnce = null
                 handler.post(it)
@@ -365,13 +398,15 @@ class BleCoolerClient(
         charBoost = find(BleProtocol.boostUuid)
         charSmart = find(BleProtocol.smartUuid)
         charFanSpeed = find(BleProtocol.fanSpeedUuid)
+        charFanSpeedAlt = find(BleProtocol.fanSpeedUuidAlt)
         charPower = find(BleProtocol.powerUuid)
+        charPowerAlt = find(BleProtocol.powerUuidAlt)
     }
 
     @SuppressLint("MissingPermission")
     private fun enableNotifications(gatt: BluetoothGatt) {
         if (!hasBlePermission()) return
-        val notifyList = listOfNotNull(charStatus, charTemp, charFanSpeed, charPower, charPowerMode, charBoost, charSmart)
+        val notifyList = listOfNotNull(charStatus, charTemp, charFanSpeed, charFanSpeedAlt, charPower, charPowerAlt, charPowerMode, charBoost, charSmart)
             .distinctBy { it.uuid }
             .filter { characteristic ->
                 characteristic.properties and BluetoothGattCharacteristic.PROPERTY_NOTIFY != 0 ||
@@ -412,8 +447,8 @@ class BleCoolerClient(
                 updateState { it.copy(smartOn = on, mode = if (on) "智能温控" else if (it.mode == "智能温控") "待机" else it.mode) }
             }
             BleProtocol.tempUuid -> parseTemp(value)?.let { temp -> updateState { it.copy(coolerTempC = temp) } }
-            BleProtocol.fanSpeedUuid -> parseRpm(value)?.let { rpm -> updateState { it.copy(fanRpm = rpm) } }
-            BleProtocol.powerUuid -> parsePower(value)?.let { power -> updateState { it.copy(powerW = power) } }
+            BleProtocol.fanSpeedUuid, BleProtocol.fanSpeedUuidAlt -> parseRpm(value)?.let { rpm -> updateState { it.copy(fanRpm = rpm) } }
+            BleProtocol.powerUuid, BleProtocol.powerUuidAlt -> parsePower(value)?.let { power -> updateState { it.copy(powerW = power) } }
             BleProtocol.statusUuid -> parseStatus1015(value)
         }
     }
@@ -487,6 +522,7 @@ class BleCoolerClient(
 
     private fun releaseGatt(message: String) {
         stopScan()
+        stopTelemetryPolling()
         runCatching { bluetoothGatt?.disconnect() }
         runCatching { bluetoothGatt?.close() }
         bluetoothGatt = null
@@ -505,7 +541,9 @@ class BleCoolerClient(
         charBoost = null
         charSmart = null
         charFanSpeed = null
+        charFanSpeedAlt = null
         charPower = null
+        charPowerAlt = null
     }
 
     private fun hasBlePermission(): Boolean {

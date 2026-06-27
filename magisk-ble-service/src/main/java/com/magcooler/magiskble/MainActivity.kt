@@ -130,7 +130,7 @@ class MainActivity : Activity() {
 
     private fun render(state: CoolerTelemetryState) {
         statusText.text = "连接：${state.status}"
-        modeText.text = "模式：${state.mode}${state.level?.let { " · ${it}档" } ?: ""}"
+        modeText.text = "模式：${state.mode}${state.level?.let { " · ${it}档" } ?: ""}${if (state.manualWritePending) " · 等待确认" else if (state.levelConfirmed) " · 已确认" else ""}"
         rpmText.text = "转速：${state.rpmText()}"
         tempText.text = "背夹温度：${state.tempText()}"
         powerText.text = "功率：${state.powerText()}"

@@ -14,6 +14,8 @@ data class CoolerTelemetryState(
     val coolingOn: Boolean = false,
     val boostOn: Boolean = false,
     val smartOn: Boolean = false,
+    val levelConfirmed: Boolean = false,
+    val manualWritePending: Boolean = false,
     val lastWriteResult: String = "--"
 ) {
     fun rpmText(): String = fanRpm?.let { "$it RPM" } ?: "--"

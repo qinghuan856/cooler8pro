@@ -11,7 +11,9 @@ object BleProtocol {
     val boostUuid: UUID = uuid16("1017")
     val smartUuid: UUID = uuid16("1018")
     val fanSpeedUuid: UUID = uuid16("101C")
+    val fanSpeedUuidAlt: UUID = uuid16("1019")
     val powerUuid: UUID = uuid16("101D")
+    val powerUuidAlt: UUID = uuid16("101A")
 
     val fanLevelValues = intArrayOf(0x28, 0x2C, 0x2E, 0x34, 0x3A, 0x40, 0x44, 0x48, 0x4C, 0x50)
 
