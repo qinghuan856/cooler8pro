@@ -30,6 +30,7 @@ class MagcoolerBleService : Service() {
         createChannel()
         startForegroundCompat()
         StateFileWriter.start(this)
+        LocalWebServer.start(this)
         logger.info("service created")
     }
 
@@ -46,6 +47,8 @@ class MagcoolerBleService : Service() {
 
     override fun onDestroy() {
         logger.info("service destroyed")
+        LocalWebServer.stop()
+        StateFileWriter.stop()
         bleClient.disconnect()
         super.onDestroy()
     }
