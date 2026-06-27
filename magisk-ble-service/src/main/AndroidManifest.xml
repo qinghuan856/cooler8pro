@@ -34,6 +34,22 @@
             android:foregroundServiceType="connectedDevice" />
 
         <receiver
+            android:name=".CommandReceiver"
+            android:directBootAware="true"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.magcooler.magiskble.action.SET_LEVEL" />
+                <action android:name="com.magcooler.magiskble.action.BOOST" />
+                <action android:name="com.magcooler.magiskble.action.SMART" />
+                <action android:name="com.magcooler.magiskble.action.TURN_ON" />
+                <action android:name="com.magcooler.magiskble.action.TURN_OFF" />
+                <action android:name="com.magcooler.magiskble.action.REFRESH" />
+                <action android:name="com.magcooler.magiskble.action.RECONNECT" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
             android:name=".PowerReceiver"
             android:directBootAware="true"
             android:enabled="true"

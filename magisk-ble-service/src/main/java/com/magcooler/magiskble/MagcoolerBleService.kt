@@ -29,6 +29,7 @@ class MagcoolerBleService : Service() {
         CoolerStateStore.addListener { state -> updateStatus(state.status) }
         createChannel()
         startForegroundCompat()
+        StateFileWriter.start()
         logger.info("service created")
     }
 

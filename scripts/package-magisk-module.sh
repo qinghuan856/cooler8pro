@@ -24,8 +24,11 @@ cp "$MODULE_DIR/customize.sh" "$STAGE_DIR/customize.sh"
 cp "$MODULE_DIR/uninstall.sh" "$STAGE_DIR/uninstall.sh"
 cp "$MODULE_DIR/config.prop" "$STAGE_DIR/config.prop"
 cp "$MODULE_DIR/config.prop" "$STAGE_DIR/system/etc/binghuan_charge_cooler/config.prop"
+if [ -f "$MODULE_DIR/action.sh" ]; then cp "$MODULE_DIR/action.sh" "$STAGE_DIR/action.sh"; fi
+if [ -d "$MODULE_DIR/webroot" ]; then cp -a "$MODULE_DIR/webroot" "$STAGE_DIR/webroot"; fi
 
 chmod 0755 "$STAGE_DIR/service.sh" "$STAGE_DIR/customize.sh" "$STAGE_DIR/uninstall.sh"
+if [ -f "$STAGE_DIR/action.sh" ]; then chmod 0755 "$STAGE_DIR/action.sh"; fi
 
 ( cd "$STAGE_DIR" && zip -qr "$ROOT_DIR/$ZIP_NAME" . )
 
