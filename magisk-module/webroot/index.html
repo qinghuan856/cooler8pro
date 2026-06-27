@@ -10,75 +10,29 @@
 </head>
 <body>
 <h1>❄️ 冰环散热控制</h1>
-<div class="card">
-  <div id="conn" class="value bad">读取状态中...</div>
-  <div class="hint">WebUI 通过 KernelSU 执行 action.sh，BLE 扫描和写入由内置 Android 服务完成。</div>
-</div>
-<div class="card kv">
-  <div><div class="label">模式</div><div id="mode" class="value">--</div></div>
-  <div><div class="label">档位</div><div id="level" class="value">--</div></div>
-  <div><div class="label">转速</div><div id="rpm" class="value">--</div></div>
-  <div><div class="label">功率</div><div id="power" class="value">--</div></div>
-  <div><div class="label">背夹温度</div><div id="temp" class="value">--</div></div>
-  <div><div class="label">最近写入</div><div id="write" class="value">--</div></div>
-</div>
-<h2>快捷控制</h2>
-<div class="grid">
-  <button onclick="cmd('turn-on')">开启散热</button>
-  <button class="red" onclick="cmd('turn-off')">关闭散热</button>
-  <button class="gray" onclick="cmd('refresh')">刷新</button>
-  <button class="orange" onclick="cmd('boost on')">破坏神 ON</button>
-  <button class="gray" onclick="cmd('boost off')">破坏神 OFF</button>
-  <button class="gray" onclick="cmd('reconnect')">重连</button>
-  <button onclick="cmd('smart on')">智能 ON</button>
-  <button class="gray" onclick="cmd('smart off')">智能 OFF</button>
-</div>
-<h2>手动档位</h2>
-<div class="levels" id="levels"></div>
-<h2>自动化</h2>
-<div class="card">
-  <div class="row">
-    <label>充电目标档位<input id="chargeLevel" type="range" min="1" max="10" value="6" oninput="chargeLabel.textContent=this.value+' 档'" /></label>
-    <div id="chargeLabel" class="value">6 档</div>
-  </div>
-  <div class="row" style="margin-top:10px">
-    <button onclick="save('charge_level',chargeLevel.value)">保存充电档位</button>
-    <button class="gray" onclick="save('enabled','true')">启用自动化</button>
-    <button class="gray" onclick="save('enabled','false')">关闭自动化</button>
-  </div>
-  <div class="hint" style="margin-top:8px">先保证 WebUI 控制、手动档位、破坏神稳定；温度阈值自动化后续再接。</div>
-</div>
-<h2>调试</h2>
-<div class="card"><div id="debug">等待命令...</div></div>
+<div class="card"><div id="conn" class="value bad">读取状态中...</div><div class="hint">如果 APK 界面能连，WebUI 按钮会通过 KernelSU 执行 action.sh，再显式广播到同一个 Android BLE 服务。</div></div>
+<div class="card kv"><div><div class="label">模式</div><div id="mode" class="value">--</div></div><div><div class="label">档位</div><div id="level" class="value">--</div></div><div><div class="label">转速</div><div id="rpm" class="value">--</div></div><div><div class="label">功率</div><div id="power" class="value">--</div></div><div><div class="label">背夹温度</div><div id="temp" class="value">--</div></div><div><div class="label">最近写入</div><div id="write" class="value">--</div></div></div>
+<h2>快捷控制</h2><div class="grid"><button onclick="cmd('turn-on')">开启散热</button><button class="red" onclick="cmd('turn-off')">关闭散热</button><button class="gray" onclick="cmd('refresh')">刷新</button><button class="orange" onclick="cmd('boost on')">破坏神 ON</button><button class="gray" onclick="cmd('boost off')">破坏神 OFF</button><button class="gray" onclick="cmd('reconnect')">重连</button><button onclick="cmd('smart on')">智能 ON</button><button class="gray" onclick="cmd('smart off')">智能 OFF</button></div>
+<h2>手动档位</h2><div class="levels" id="levels"></div>
+<h2>自动化</h2><div class="card"><div class="row"><label>充电目标档位<input id="chargeLevel" type="range" min="1" max="10" value="6" oninput="chargeLabel.textContent=this.value+' 档'" /></label><div id="chargeLabel" class="value">6 档</div></div><div class="row" style="margin-top:10px"><button onclick="save('charge_level',chargeLevel.value)">保存充电档位</button><button class="gray" onclick="save('enabled','true')">启用自动化</button><button class="gray" onclick="save('enabled','false')">关闭自动化</button></div><div class="hint" style="margin-top:8px">先保证 WebUI 控制、手动档位、破坏神稳定；温度阈值自动化后续再接。</div></div>
+<h2>调试</h2><div class="card"><div id="debug">等待命令...</div></div>
 <script>
-const ACTION = '/data/adb/modules/binghuan_charge_cooler/action.sh';
+const ACTION='sh /data/adb/modules/binghuan_charge_cooler/action.sh ';
 for(let i=1;i<=10;i++){let b=document.createElement('button');b.textContent=i+'档';b.onclick=()=>cmd('set-level '+i);levels.appendChild(b)}
 function log(x){debug.textContent=String(x||'').slice(0,2000)}
-async function shell(command){
-  const full = 'sh ' + ACTION + ' ' + command;
-  try {
-    if (window.ksu && typeof window.ksu.exec === 'function') return await window.ksu.exec(full);
-    if (window.KSU && typeof window.KSU.exec === 'function') return await window.KSU.exec(full);
-    if (window.Android && typeof window.Android.exec === 'function') return window.Android.exec(full);
-    const r = await fetch('/action?action=' + encodeURIComponent(full));
-    return await r.text();
-  } catch(e) {
-    log('执行失败: '+e+'\n命令: '+full);
-    throw e;
-  }
-}
-async function cmd(s){log('执行: '+s); const out=await shell(s); log(out||('已发送: '+s)); setTimeout(poll,1200)}
-async function save(k,v){const out=await shell('save '+k+' '+v); log(out||('已保存 '+k+'='+v)); alert('已保存 '+k+'='+v)}
-async function poll(){
+async function shell(args){
+  const full=ACTION+args;
   try{
-    const out = await shell('status');
-    const s = JSON.parse(String(out).trim() || '{}');
-    conn.textContent=(s.connected?'✅ 已连接 ':'⛔ ')+(s.status||'--');conn.className='value '+(s.connected?'ok':'bad');
-    mode.textContent=s.mode||'--';level.textContent=s.level>0?s.level+' 档':'--';rpm.textContent=s.fanRpm>=0?s.fanRpm+' RPM':'--';
-    power.textContent=s.powerW>=0?s.powerW+' W':'--';temp.textContent=s.coolerTempC>-90?Number(s.coolerTempC).toFixed(1)+' °C':'--';
-    write.textContent=s.lastWriteResult||'--';
-  }catch(e){conn.textContent='⛔ WebUI 命令执行失败';conn.className='value bad'}
+    if(window.ksu&&typeof window.ksu.exec==='function')return await window.ksu.exec(full);
+    if(window.KSU&&typeof window.KSU.exec==='function')return await window.KSU.exec(full);
+    if(window.Android&&typeof window.Android.exec==='function')return window.Android.exec(full);
+    if(typeof ksu!=='undefined'&&typeof ksu.exec==='function')return await ksu.exec(full);
+    const r=await fetch('k://exec?cmd='+encodeURIComponent(full));return await r.text();
+  }catch(e){log('执行失败: '+e+'\n'+full);throw e}
 }
+async function cmd(s){log('执行: '+s);const out=await shell(s);log(out||('已发送: '+s));setTimeout(poll,1500)}
+async function save(k,v){const out=await shell('save '+k+' '+v);log(out||('已保存 '+k+'='+v));alert('已保存 '+k+'='+v)}
+async function poll(){try{const out=await shell('status');const s=JSON.parse(String(out).trim()||'{}');conn.textContent=(s.connected?'✅ 已连接 ':'⛔ ')+(s.status||'--');conn.className='value '+(s.connected?'ok':'bad');mode.textContent=s.mode||'--';level.textContent=s.level>0?s.level+' 档':'--';rpm.textContent=s.fanRpm>=0?s.fanRpm+' RPM':'--';power.textContent=s.powerW>=0?s.powerW+' W':'--';temp.textContent=s.coolerTempC>-90?Number(s.coolerTempC).toFixed(1)+' °C':'--';write.textContent=s.lastWriteResult||'--'}catch(e){conn.textContent='⛔ WebUI 执行失败，见调试';conn.className='value bad'}}
 setInterval(poll,2500);poll();
 </script>
 </body>

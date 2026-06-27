@@ -10,7 +10,7 @@ ensure_service() {
 
 send() {
   ensure_service
-  am broadcast --user 0 -a "$1" ${2:-} >/dev/null 2>&1
+  am broadcast --user 0 -n "$PKG/.CommandReceiver" -a "$1" ${2:-} >/dev/null 2>&1
 }
 
 save_cfg() {
